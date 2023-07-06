@@ -1,7 +1,7 @@
 import speech_recognition as sr
 import pyttsx3
 import requests
-from bs4 import BeautifulSoup
+import time
 
 # Initialize the recognizer
 r = sr.Recognizer()
@@ -11,6 +11,11 @@ engine = pyttsx3.init()
 
 # Initialize the to-do list
 todo_list = []
+
+# Define rate limiting parameters
+REQUESTS_PER_MINUTE = 60  # Maximum number of requests allowed per minute
+REQUESTS_INTERVAL = 60 / REQUESTS_PER_MINUTE  # Interval between each request (in seconds)
+last_request_time = time.time()
 
 def speak(text):
     engine.say(text)
@@ -40,11 +45,12 @@ def process_command(command):
         # Handle to-do list logic here
         speak("Yes, I can help you with that. Let's create a to-do list.")
         manage_todo_list()
-    elif "what" or "when" or "which" or "how" in command:
-        # Handle web search logic here
-        query = command.replace("what" or "when" or "which" or "how", "").strip()
-        search_web(query)
-    elif "exit" in command:
+    elif any(keyword in command for keyword in ["what", "when", "which", "how"]):
+        # Handle ChatGPT API logic here
+        query = command.strip()
+        answer = get_answer_from_chatgpt(query)
+        speak(answer)
+    elif "exit" or "bye" in command:
         speak("Goodbye!")
         exit()
     else:
@@ -84,20 +90,40 @@ def manage_todo_list():
     else:
         speak("Your to-do list is empty.")
 
-def search_web(query):
-    speak(f"Sure, I will search the web for '{query}'.")
-    try:
-        response = requests.get(f"https://www.google.com/search?q={query}")
-        soup = BeautifulSoup(response.text, 'html.parser')
-        results = soup.select('.kno-rdesc span')
+def get_answer_from_chatgpt(query):
+    global last_request_time
 
-        if results:
-            answer = results[0].text
-            speak(f"According to the web, {answer}")
-        else:
-            speak("I'm sorry, I couldn't find any relevant information.")
-    except:
-        speak("I'm sorry, an error occurred while searching the web.")
+    # Check if cooldown period has passed since the last request
+    current_time = time.time()
+    elapsed_time = current_time - last_request_time
+    if elapsed_time < REQUESTS_INTERVAL:
+        wait_time = REQUESTS_INTERVAL - elapsed_time
+        time.sleep(wait_time)
+
+    # Make an API call to the ChatGPT endpoint with the user query
+    url = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer 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"  # Replace with your API key
+    }
+    data = {
+        "model": "gpt-3.5-turbo",
+        "messages": [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": query}],
+    }
+
+    response = requests.post(url, headers=headers, json=data)
+    response.raise_for_status()
+    result = response.json()
+
+    # Update the last request time
+    last_request_time = time.time()
+
+    # Extract and return the answer from the API response
+    if "choices" in result and result["choices"]:
+        answer = result["choices"][0]["message"]["content"]
+        return answer
+    else:
+        return "I'm sorry, I couldn't find any relevant information."
 
 # Main loop
 while True:
